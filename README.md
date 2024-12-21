@@ -1,6 +1,6 @@
-# CrackFusion - Track Safety Powered by Zenith
+# CrackFusion - AI-Enabled Railway Track Crack Detection Model
 
-CrackFusion is an innovative railway crack detection system developed by **Team Zenith** for the event **TEJAS**. This project ensures railway safety by identifying defects such as cracks and fractures on tracks. Using piezoelectric sensors, AI-based analysis, and real-time notifications, CrackFusion provides a reliable solution for track monitoring and maintenance.
+CrackFusion is an AI-enabled railway crack detection system developed by **Team Zenith** for the event **TEJAS**. This project ensures railway safety by identifying defects such as cracks and fractures on tracks. Using acoustic sensors, AI-based analysis, and real-time notifications, CrackFusion provides a cutting-edge solution for track monitoring and maintenance.
 
 ## Table of Contents
 - [Overview](#overview)
