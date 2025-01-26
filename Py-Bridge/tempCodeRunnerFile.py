@@ -9,26 +9,26 @@ import numpy as np
 import requests
 import geocoder
 
+import serial.tools.list_ports
 
-import serial
-from serial.tools import list_ports
-
-# List all available ports with details
-ports = list(list_ports.comports())
+ports = serial.tools.list_ports.comports()
 for port in ports:
-    print(f"Port: {port.device}")
-    print(f"Description: {port.description}")
-    print(f"Manufacturer: {port.manufacturer}")
-    print("---")
+    print(port.device)  # Check available ports
+
 
 
 
 # Set up serial communication
-arduino_port = 'COM7'  # Replace with your Arduino COM port
+arduino_port = 'COM5'  # Replace with your Arduino COM port
 baud_rate = 9600
 
 # Initialize serial connection
-ser = serial.Serial(arduino_port, baud_rate, timeout=1)
+try:
+    ser = serial.Serial(arduino_port, baud_rate, timeout=1)
+except serial.SerialException as e:
+    print(f"Error opening serial port {arduino_port}: {e}")
+    print("Please check if the correct port is selected and if you have permission to access it")
+    exit(1)
 
 # Create a Dash app
 app = dash.Dash(__name__)
@@ -214,6 +214,66 @@ app.layout = html.Div([
     )
 ])
 
+def parse_sensor_data(line):
+    parts = [part.strip() for part in line.split('|')]
+    
+    adc_value = float(parts[0].split(':')[1].strip().split()[0])
+    amplitude = float(parts[1].split(':')[1].strip().split('V')[0])
+    frequency = float(parts[2].split(':')[1].strip().split('Hz')[0])
+    status = parts[3].strip() if len(parts) > 3 else "N/A"
+    
+    return adc_value, amplitude, frequency, status
+
+def update_plots(time_data, frequency_data, amplitude_data, current_time):
+    fig_frequency.data[0].update(x=list(time_data), y=list(frequency_data))
+    fig_amplitude.data[0].update(x=list(time_data), y=list(amplitude_data))
+    
+    time_window = 15
+    xaxis_range = [current_time - time_window, current_time]
+    fig_frequency.update_layout(xaxis_range=xaxis_range)
+    fig_amplitude.update_layout(xaxis_range=xaxis_range)
+
+def get_display_values(adc_value, frequency, amplitude, status):
+    return (
+        f"Status: {status}",
+        f"Operation Mode: {status}",
+        f"{adc_value:.2f}",
+        f"{frequency:.2f} Hz",
+        f"{amplitude:.2f} V"
+    )
+
+def get_fallback_values():
+    return (
+        fig_frequency,
+        fig_amplitude,
+        "System operational",
+        coordinates_data[-1] if coordinates_data else "Waiting for coordinates...",
+        f"{adc_data[-1]:.2f}" if adc_data and adc_data[-1] is not None else "Waiting...",
+        f"{frequency_data[-1]:.2f} Hz" if frequency_data and frequency_data[-1] is not None else "Waiting...",
+        f"{amplitude_data[-1]:.2f} V" if amplitude_data and amplitude_data[-1] is not None else "Waiting..."
+    )
+
+def handle_error(error_type="read", error=None):
+    print(f"Error in {error_type}: {error}")
+    return (
+        fig_frequency,
+        fig_amplitude,
+        f"Error {error_type}ing data",
+        "Error in data",
+        str(adc_data[-1]) if adc_data else "Error",
+        str(frequency_data[-1]) if frequency_data else "Error",
+        str(amplitude_data[-1]) if amplitude_data else "Error"
+    )
+
+def update_data_points(adc_value, amplitude, frequency, status):
+    current_time = time.time()
+    time_data.append(current_time)
+    amplitude_data.append(amplitude)
+    frequency_data.append(frequency)
+    coordinates_data.append(status)
+    adc_data.append(adc_value)
+    return current_time
+
 @app.callback(
     [Output('frequency-graph', 'figure'),
      Output('amplitude-graph', 'figure'),
@@ -228,94 +288,24 @@ def update_graph(n_intervals):
     global fig_frequency, fig_amplitude, time_data, amplitude_data, frequency_data, coordinates_data, adc_data
     
     try:
-        if ser.in_waiting > 0:
-            line = ser.readline().decode('utf-8').strip()
-            print(f"Received data: {line}")
+        if not ser.in_waiting:
+            return get_fallback_values()
+            
+        line = ser.readline().decode('utf-8').strip()
+        if not ('ADC Value' in line and 'Amplitude' in line and 'Frequency' in line):
+            return get_fallback_values()
 
-            if 'ADC Value' in line and 'Amplitude' in line and 'Frequency' in line:
-                # Split by '|' and clean up each part
-                parts = [part.strip() for part in line.split('|')]
-                
-                try:
-                    # Parse ADC value
-                    adc_value = float(parts[0].split(':')[1].strip().split()[0])
-                    
-                    # Parse Amplitude
-                    amplitude = float(parts[1].split(':')[1].strip().split('V')[0])
-                    
-                    # Parse Frequency
-                    frequency = float(parts[2].split(':')[1].strip().split('Hz')[0])
-                    
-                    # Get operation status and coordinates
-                    status = parts[3].strip() if len(parts) > 3 else "N/A"
-                    
-                    # Update deques
-                    current_time = time.time()
-                    time_data.append(current_time)
-                    amplitude_data.append(amplitude)
-                    frequency_data.append(frequency)
-                    coordinates_data.append(status)
-                    adc_data.append(adc_value)
-
-                    # Update plots
-                    fig_frequency.data[0].update(x=list(time_data), y=list(frequency_data))
-                    fig_amplitude.data[0].update(x=list(time_data), y=list(amplitude_data))
-
-                    # Update time window
-                    time_window = 15
-                    xaxis_range = [current_time - time_window, current_time]
-                    
-                    # Update layouts
-                    fig_frequency.update_layout(xaxis_range=xaxis_range)
-                    fig_amplitude.update_layout(xaxis_range=xaxis_range)
-
-                    # Return current values
-                    return (
-                        fig_frequency,
-                        fig_amplitude,
-                        f"Status: {status}",
-                        f"Operation Mode: {status}",
-                        f"{adc_value:.2f}",
-                        f"{frequency:.2f} Hz",
-                        f"{amplitude:.2f} V"
-                    )
-
-                except (IndexError, ValueError) as e:
-                    print(f"Data parsing error: {e}")
-                    # Return last known good values for graphs but error messages for text
-                    return (
-                        fig_frequency,
-                        fig_amplitude,
-                        "Error parsing data",
-                        "Error in data",
-                        str(adc_data[-1]) if adc_data else "Error",
-                        str(frequency_data[-1]) if frequency_data else "Error",
-                        str(amplitude_data[-1]) if amplitude_data else "Error"
-                    )
-
+        try:
+            adc_value, amplitude, frequency, status = parse_sensor_data(line)
+            current_time = update_data_points(adc_value, amplitude, frequency, status)
+            update_plots(time_data, frequency_data, amplitude_data, current_time)
+            return (fig_frequency, fig_amplitude, *get_display_values(adc_value, frequency, amplitude, status))
+            
+        except (IndexError, ValueError) as e:
+            return handle_error("parsing", e)
+            
     except Exception as e:
-        print(f"Error in update_graph: {e}")
-        # Return last known good values
-        return (
-            fig_frequency,
-            fig_amplitude,
-            "Error reading data",
-            "Communication error",
-            str(adc_data[-1]) if adc_data else "Error",
-            str(frequency_data[-1]) if frequency_data else "Error",
-            str(amplitude_data[-1]) if amplitude_data else "Error"
-        )
-
-    # Return last known good values when no new data
-    return (
-        fig_frequency,
-        fig_amplitude,
-        "System operational",
-        coordinates_data[-1] if coordinates_data else "Waiting for coordinates...",
-        f"{adc_data[-1]:.2f}" if adc_data and adc_data[-1] is not None else "Waiting...",
-        f"{frequency_data[-1]:.2f} Hz" if frequency_data and frequency_data[-1] is not None else "Waiting...",
-        f"{amplitude_data[-1]:.2f} V" if amplitude_data and amplitude_data[-1] is not None else "Waiting..."
-    )
+        return handle_error("reading", e)
 
 # Start the Dash app server
 if __name__ == '__main__':
